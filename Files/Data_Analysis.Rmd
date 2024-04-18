@@ -1,0 +1,249 @@
+---
+title: "Analysis_Kicker_Project"
+author: "Jonas Bruno"
+date: "2024-04-09"
+output: html_document
+---
+
+### Load Packages
+```{r}
+Sys.setLanguage("en")
+library(tidyverse)
+library(ggrepel)
+library(nflreadr)
+library(nflplotR)
+
+library(conflicted)
+library(dplyr)
+library(ggplot2)
+library(zoo)
+
+conflicts_prefer(dplyr::filter)
+```
+
+
+## R Markdown
+
+```{r}
+data <- load_pbp(2023)
+data23 <- calculate_player_stats_kicking(data, weekly = FALSE)
+data23_clean <- season_data(data23)
+
+data23_clean
+```
+#League statistics
+
+
+```{r}
+
+league_fg_season <- function(data) {
+  fg_made <- c()
+  fg_missed <- c()
+  
+  for (i in 1:nrow(data)) {
+    x <- as.integer(strsplit(data$fg_made, ";")[[i]])
+    
+    y <- as.integer(strsplit(data$fg_missed, ";")[[i]])
+    
+    fg_made <- c(fg_made, x[!is.na(x)])
+    fg_missed <- c(fg_missed, y[!is.na(y)])
+  
+  }
+  return(list(player_name = data$player_name, fg_made = fg_made, fg_missed = fg_missed))
+  
+}
+```
+
+#Run the function
+
+```{r}
+fg_23 <- league_fg_season(data23_clean)
+```
+(NA come from parts where someone has no missed field goals -> dropped)
+
+```{r}
+length_diff <- length(fg_23$fg_made) - length(fg_23$fg_missed)
+if(length_diff > 0) {
+  fg_23$fg_missed <- c(fg_23$fg_missed, rep(NA, length_diff))
+} else if(length_diff < 0) {
+  fg_23$fg_made <- c(fg_23$fg_made, rep(NA, -length_diff))
+}
+
+# Create the data frame
+df_fg23 <- data.frame(x = c(fg_23$fg_made, fg_23$fg_missed),
+                      group = c(rep("Made", length(fg_23$fg_made)), rep("Missed", length(fg_23$fg_missed))))
+
+# Plot
+ggplot(df_fg23, aes(x = x, color = group)) +
+  stat_count(geom = "point", position = position_dodge(width = 0.5)) +  # Plot the count of each x-value
+  scale_x_continuous(limits = c(1, 75)) +  # Set x-axis limits from 1 to 75
+  #This removes 0
+  labs(x = "X Axis Label", y = "Frequency", title = "Title") +  # Add labels and title
+  theme_minimal()
+```
+
+
+
+
+```{r}
+interval <- seq(1,70)#longest FG is 66 yards
+
+count1 <- table(factor(fg_23$fg_made, levels = interval))
+count2 <- table(factor(fg_23$fg_missed, levels = interval))
+
+# Combine the counts
+combined_count <- data.frame(Integer = as.numeric(rownames(count1)))
+combined_count$fg_made <- count1
+combined_count$fg_missed <- count2
+
+# Replace missing counts with 0
+combined_count$fg_made[is.na(combined_count$fg_made)] <- 0
+combined_count$fg_missed[is.na(combined_count$fg_missed)] <- 0
+
+# Print the combined counts
+print(combined_count)
+```
+
+
+```{r}	
+# Plot the combined count
+ggplot(combined_count, aes(x = Integer)) +
+  geom_point(aes(y = fg_made, color = "Made")) +
+  geom_point(aes(y = fg_missed, color = "Missed")) +
+  labs(x = "Field Goal Distance", y = "Count", title = "Made vs Missed Field Goals") +
+  scale_color_manual(values = c("Made" = "blue", "Missed" = "red")) +
+  theme_minimal() +
+  coord_cartesian(ylim = c(0, 50)) +
+  scale_y_continuous(limits = c(1, 50), breaks = seq(0, 50, by = 5))
+#Remove the 0 because there are no fielgoald from that distance
+```	
+
+```{r}	
+
+# Plot the combined count
+ggplot(combined_count, aes(x = Integer)) +
+  geom_line(aes(y = rollmean(fg_made, k = 3, fill = NA), color = "Made")) +
+  geom_line(aes(y = rollmean(fg_missed, k = 3, fill = NA), color = "Missed")) +
+  labs(x = "Field Goal Distance", y = "Count", title = "Made vs Missed Field Goals") +
+  scale_color_manual(values = c("Made" = "blue", "Missed" = "red")) +
+  theme_minimal() +
+  coord_cartesian(ylim = c(0, 50)) +
+  scale_y_continuous(limits = c(0, 50), breaks = seq(0, 50, by = 5))
+
+```	
+
+
+#Analyze or results from the regression
+
+```{r}
+season23_parameters_results <- season_parameters(data23_clean, 10)
+```
+
+
+
+```{r}
+season23_parameters_results$names <- data23_clean$player_name
+
+slope_mean <- mean(season23_parameters_results$slope)
+pat_mean <- mean(season23_parameters_results$pat)
+
+cross_coords <- data.frame(slope_mean, pat_mean)
+
+ggplot(season23_parameters_results, aes(x = slope, y = pat)) +
+  geom_point() +  # Add points
+  geom_point(data = cross_coords, aes(x = slope_mean, y = pat_mean), shape = 4, size = 4, color = "blue") +  # Add cross marker
+  geom_text_repel(aes(label = names), size = 2, nudge_x = 0.0001, nudge_y = 0.0001) +  # Add names with adjusted font size
+  
+  geom_hline(yintercept = pat_mean, linetype = "dotted", color = "blue") + # Add horizontal line
+  geom_vline(xintercept = slope_mean, linetype = "dotted", color = "blue") + # Add vertical line
+  geom_text(aes(x = slope_mean-0.002, y = pat_mean-0.06, label = "Reliably Average"), size = 3)+
+  geom_text(aes(x = slope_mean+0.003, y = pat_mean-0.060, label = "Go for it"), size = 3)+
+  geom_text(aes(x = slope_mean+0.003, y = pat_mean+0.020, label = "Fast Regression"), size = 3)+
+  geom_text(aes(x = slope_mean-0.002, y = pat_mean+0.02, label = "Elite"), size = 3)+
+  
+  labs(x = "Slope", y = "Pat") +  # Label axes
+  ggtitle("PAT vs. FG-Slope") +
+  theme(
+    text = element_text(size = 12),  # Adjust font size for all text elements
+    axis.title = element_text(size = 12),  # Adjust font size for axis titles
+    plot.title = element_text(size = 14)  # Adjust font size for plot title
+  )
+```
+
+
+### Turn the kicker comparison graph into a function
+
+```{r}
+
+
+kicker_comparison_plot <- function(parameter_data) {
+
+slope_mean <- mean(parameter_data$slope)
+intercept_mean <- mean(parameter_data$intercept)
+
+cross_coords <- data.frame(slope_mean, intercept_mean)
+
+ggplot(parameter_data, aes(x = slope, y = intercept)) +
+  geom_point() +  # Add points
+  geom_point(data = cross_coords, aes(x = slope_mean, y = intercept_mean), shape = 4, size = 4, color = "blue") +  # Add cross marker
+  geom_text_repel(aes(label = full_season_data.player_name), size = 2, nudge_x = 0.0001, nudge_y = 0.0001) +  # Add names with adjusted font size
+  
+  geom_hline(yintercept = intercept_mean, linetype = "dotted", color = "blue") + # Add horizontal line
+  geom_vline(xintercept = slope_mean, linetype = "dotted", color = "blue") + # Add vertical line
+  geom_text(aes(x = slope_mean-0.002, y = intercept_mean-0.06, label = "Reliably Average"), size = 3)+
+  geom_text(aes(x = slope_mean+0.003, y = intercept_mean-0.060, label = "Go for it"), size = 3)+
+  geom_text(aes(x = slope_mean+0.003, y = intercept_mean+0.020, label = "Fast Regression"), size = 3)+
+  geom_text(aes(x = slope_mean-0.002, y = intercept_mean+0.02, label = "Elite"), size = 3)+
+  
+  labs(x = "Slope", y = "Pat") +  # Label axes
+  ggtitle("PAT vs. FG-Slope") +
+  theme(
+    text = element_text(size = 12),  # Adjust font size for all text elements
+    axis.title = element_text(size = 12),  # Adjust font size for axis titles
+    plot.title = element_text(size = 14)  # Adjust font size for plot title
+  )
+
+}
+
+```
+
+
+#Plot the 2023 Data
+```{r}
+kicker_comparison_plot(season23_parameters_results)
+
+kicker_comparison_plot(season22_parameters_results)
+
+kicker_comparison_plot(season21_parameters_results)
+
+kicker_comparison_plot(season20_parameters_results)
+
+kicker_comparison_plot(season19_parameters_results)
+
+kicker_comparison_plot(season18_parameters_results)
+
+kicker_comparison_plot(season17_parameters_results)
+
+kicker_comparison_plot(season16_parameters_results)
+
+```
+
+#
+
+
+#Plot 2022 Data
+
+```{r}
+
+```
+
+
+
+```{r}
+kicker_comparison_plot(my_analysis_data$Season_2023)
+```
+
+
+
+
+
